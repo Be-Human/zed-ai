@@ -3,7 +3,8 @@ import react from '@vitejs/plugin-react'
 
 export default defineConfig({
   plugins: [react()],
-  base: '/zed-ai/',
+  // Remove base path for Cloudflare Pages (they handle root path correctly)
+  // base: '/zed-ai/',
   server: {
     port: 3000
   },
