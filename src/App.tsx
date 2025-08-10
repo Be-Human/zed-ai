@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react'
 
-type Provider = 'openai' | 'deepseek'
+type Provider = 'openai' // | 'deepseek' // 注释掉 deepseek
 
 interface Message {
   id: string
@@ -14,9 +14,64 @@ interface Config {
     apiKey: string
     baseUrl: string
   }
-  deepseek: {
-    apiKey: string
-    baseUrl: string
+  // deepseek: {
+  //   apiKey: string
+  //   baseUrl: string
+  // }
+}
+
+// GraphQL 查询和变异定义
+const CHAT_COMPLETION_MUTATION = `
+  mutation ChatCompletion($input: ChatCompletionInput!) {
+    chatCompletion(input: $input) {
+      id
+      object
+      created
+      model
+      choices {
+        index
+        message {
+          role
+          content
+        }
+        finishReason
+      }
+      usage {
+        promptTokens
+        completionTokens
+        totalTokens
+      }
+    }
+  }
+`
+
+interface ChatCompletionInput {
+  model: string
+  messages: Array<{
+    role: string
+    content: string
+  }>
+  temperature?: number
+  maxTokens?: number
+}
+
+interface GraphQLResponse<T> {
+  data?: T
+  errors?: Array<{
+    message: string
+    path?: string[]
+  }>
+}
+
+interface ChatCompletionData {
+  chatCompletion: {
+    id: string
+    choices: Array<{
+      message: {
+        role: string
+        content: string
+      }
+    }>
   }
 }
 
@@ -29,11 +84,11 @@ function App() {
     openai: {
       apiKey: import.meta.env.VITE_OPENAI_API_KEY || '',
       baseUrl: import.meta.env.VITE_OPENAI_BASE_URL || 'https://api.openai.com/v1'
-    },
-    deepseek: {
-      apiKey: import.meta.env.VITE_DEEPSEEK_API_KEY || '',
-      baseUrl: import.meta.env.VITE_DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1'
     }
+    // deepseek: {
+    //   apiKey: import.meta.env.VITE_DEEPSEEK_API_KEY || '',
+    //   baseUrl: import.meta.env.VITE_DEEPSEEK_BASE_URL || 'https://api.deepseek.com/v1'
+    // }
   })
   
   const messagesEndRef = useRef<HTMLDivElement>(null)
@@ -46,6 +101,59 @@ function App() {
   useEffect(() => {
     scrollToBottom()
   }, [messages])
+
+  // GraphQL 请求函数
+  const makeGraphQLRequest = async (query: string, variables: any, endpoint: string, apiKey: string) => {
+    const response = await fetch(`${endpoint}/graphql`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        query,
+        variables
+      })
+    })
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+
+    const result: GraphQLResponse<ChatCompletionData> = await response.json()
+    
+    if (result.errors && result.errors.length > 0) {
+      throw new Error(`GraphQL error: ${result.errors.map(e => e.message).join(', ')}`)
+    }
+
+    return result.data
+  }
+
+  // 备用 REST API 调用（如果 GraphQL 不可用）
+  const makeRESTRequest = async (messages: Message[], currentConfig: any, modelName: string) => {
+    const response = await fetch(`${currentConfig.baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${currentConfig.apiKey}`
+      },
+      body: JSON.stringify({
+        model: modelName,
+        messages: messages.map(msg => ({
+          role: msg.role,
+          content: msg.content
+        })),
+        temperature: 0.7,
+        max_tokens: 1000
+      })
+    })
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`)
+    }
+
+    return await response.json()
+  }
 
   const sendMessage = async () => {
     if (!input.trim() || isLoading) return
@@ -68,28 +176,40 @@ function App() {
     setIsLoading(true)
 
     try {
-      const response = await fetch(`${currentConfig.baseUrl}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${currentConfig.apiKey}`
-        },
-        body: JSON.stringify({
-          model: provider === 'openai' ? 'gpt-3.5-turbo' : 'deepseek-chat',
-          messages: [...messages, userMessage].map(msg => ({
+      const allMessages = [...messages, userMessage]
+      const modelName = provider === 'openai' ? 'gpt-3.5-turbo' : 'deepseek-chat'
+      
+      let data: any
+
+      try {
+        // 首先尝试 GraphQL 调用
+        const variables: ChatCompletionInput = {
+          model: modelName,
+          messages: allMessages.map(msg => ({
             role: msg.role,
             content: msg.content
           })),
           temperature: 0.7,
-          max_tokens: 1000
-        })
-      })
+          maxTokens: 1000
+        }
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
+        const graphqlData = await makeGraphQLRequest(
+          CHAT_COMPLETION_MUTATION,
+          { input: variables },
+          currentConfig.baseUrl,
+          currentConfig.apiKey
+        )
+
+        data = {
+          choices: graphqlData?.chatCompletion.choices || []
+        }
+      } catch (graphqlError) {
+        console.warn('GraphQL 请求失败，回退到 REST API:', graphqlError)
+        
+        // 如果 GraphQL 失败，回退到 REST API
+        data = await makeRESTRequest(allMessages, currentConfig, modelName)
       }
 
-      const data = await response.json()
       const assistantMessage: Message = {
         id: (Date.now() + 1).toString(),
         role: 'assistant',
@@ -131,14 +251,14 @@ function App() {
     <div className="chat-container">
       {/* 头部 */}
       <div className="chat-header">
-        <h1 className="chat-title">Zed-AI 对话助手</h1>
+        <h1 className="chat-title">Zed-AI 对话助手 (GraphQL)</h1>
         <select 
           className="provider-select" 
           value={provider} 
           onChange={(e) => setProvider(e.target.value as Provider)}
         >
           <option value="openai">OpenAI</option>
-          <option value="deepseek">DeepSeek</option>
+          {/* <option value="deepseek">DeepSeek</option> */}
         </select>
       </div>
 
@@ -152,7 +272,7 @@ function App() {
             marginTop: '20%'
           }}>
             👋 欢迎使用 Zed-AI！<br/>
-            选择AI提供商并开始对话吧
+            现在使用 GraphQL API 进行对话
           </div>
         )}
         
