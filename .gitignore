@@ -25,3 +25,4 @@ yarn-debug.log*
 # Lock files (避免部署问题)
 package-lock.json
 yarn.lock
+# 但是保留 npm-shrinkwrap.json 用于部署
