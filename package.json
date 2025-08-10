@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "install-and-build": "npm install --no-package-lock && npm run build",
+    "cf-build": "npm install --no-package-lock --no-audit --no-fund && tsc && vite build"
   },
   "dependencies": {
     "react": "^18.2.0",
