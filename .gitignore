@@ -21,3 +21,7 @@ Thumbs.db
 npm-debug.log*
 yarn-debug.log*
 *.log
+
+# Lock files (避免部署问题)
+package-lock.json
+yarn.lock
